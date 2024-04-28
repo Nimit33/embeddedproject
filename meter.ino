@@ -1,7 +1,12 @@
 #include <SPI.h>
 #include <Wire.h>
+
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH110X.h>
+// for wifi
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClient.h>
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -15,7 +20,7 @@ constexpr int trigPin = 13;
 constexpr int echoPin = 15;
 constexpr int btnPin = 12;
 
-constexpr int BUZZ_DURATION = 100;
+constexpr int BUZZ_DURATION = 500;
 constexpr int BUZZ_GAP = 100;
 constexpr int DELAY = 250;
 constexpr int DETECT_DISTANCE = 5; // 5 cm
@@ -23,9 +28,16 @@ constexpr int WAIT = 5 * 1000;  // 5 seconds
 constexpr int THANK_YOU = 3 * 1000; // 3 seconds
 constexpr float RATE = 1.f;  // 1 rs / sec
 
+// Wi-Fi connection
+const char* ssid = "realme123";
+const char* password = "987654321";
+String serverName = "http://192.168.144.219:5000";
+// unsigned long lastTime = 0;
+// unsigned long timerDelay = 5000;
+
 enum States {
   IDLE, WAITING, ENGAGED, PAYMENT, PAID, UNPAID
-} current_state;
+} current_state, last_state;
 
 int led_state = LOW;
 
@@ -75,6 +87,23 @@ int getDistance() {
   int duration = pulseIn(echoPin, HIGH);
  
   return (duration/2) * 0.0343;
+}
+
+void sendStatus(char code){
+  if(WiFi.status()== WL_CONNECTED){
+    WiFiClient client;
+    HTTPClient http;
+    http.begin(client, serverName+"/status");
+    http.addHeader("Content-Type", "application/json");
+    char* body = "{\"parked\" : 0}";
+    body[12] = code; 
+
+    int httpResponseCode = http.POST(body);
+    http.end();
+  }
+  else {
+    Serial.println("WiFi Disconnected");
+  }
 }
 
 bool isCarNear() {
@@ -152,36 +181,42 @@ void gotoIdle() {
   lightOff();
   wait_count = 0;
   cost = 0.f;
+  last_state = current_state;
   current_state = IDLE;
 }
 
 void gotoWaiting() {
   lightOn();
   buzzOnce();
+  last_state = current_state;
   current_state = WAITING;
 }
 
 void gotoEngaged() {
   lightOn();
   buzzTwice();
+  last_state = current_state;
   current_state = ENGAGED;
 }
 
 void gotoPayment() {
   lightOn();
   buzzThrice();
+  last_state = current_state;
   current_state = PAYMENT;
 }
 
 void gotoPaid() {
   lightOff();
   buzzTwice();
+  last_state = current_state;
   current_state = PAID;
 }
 
 void gotoUnpaid() {
   lightOff();
   buzzOn();
+  last_state = current_state;
   current_state = UNPAID;
 }
 
@@ -191,12 +226,20 @@ void stateIdle() {
     "   HERE"
   );
 
+  if(last_state != IDLE){
+    sendStatus('0');
+  }
+
   if (isCarNear()) {
     gotoWaiting();
   }
 }
 
 void stateWaiting() {
+  if(last_state != WAITING){
+    sendStatus('1');
+  }
+
   printScreen(
     "  WAITING"
   );
@@ -271,11 +314,31 @@ void stateUnpaid() {
     "  WARNING\n\n"
     "  UNPAID"
   );
+
+  if ( isBtnPressed() ) {
+    buzzOff();
+    gotoIdle();
+  }
 }
 
 void setup() {
+  Serial.begin(9600);
+  // WiFi setup
+  WiFi.begin(ssid, password);
+  Serial.println("Connecting");
+  while(WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.print("Connected to WiFi network with IP Address: ");
+  Serial.println(WiFi.localIP());
+
   setupPins();
   setupScreen();
+  
+  sendStatus('0');
+  gotoIdle();
 }
 
 void loop() {
@@ -301,6 +364,6 @@ void loop() {
     stateUnpaid();
     break;
   }
-  
+
   delay(DELAY);
 }
